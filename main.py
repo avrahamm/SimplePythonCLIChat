@@ -1,7 +1,6 @@
-import os
+import os, json
 from dotenv import load_dotenv
 import openai
-from openai.types.chat.chat_completion_tool_choice_option_param import ChatCompletionToolChoiceOptionParam
 
 load_dotenv()
 
@@ -13,6 +12,10 @@ target_model = os.environ.get("MODEL", "gpt-4o-mini")
 
 USER_ROLE = "user"
 SYSTEM_ROLE = "system"
+
+# This flag variable is changed by end_conversation function call
+# invoked by a model in tool_calls
+is_terminated = False
 
 client = openai.OpenAI(
     api_key=api_key,
@@ -70,7 +73,8 @@ def get_chat_completion(model,
 
 
 def end_conversation():
-    pass
+    global is_terminated
+    is_terminated = True
 
 functions_list = [
     {
@@ -87,9 +91,31 @@ functions_list = [
     }
 ]
 
+
+def perform_function_calls( assistant_message):
+    if not assistant_message.tool_calls:
+        return
+    # First create a dictionary to map the function name string to actual function
+    function_list = {
+        "end_conversation":end_conversation
+    }
+
+    # Extract the tool_calls contenttool_call = {ChatCompletionMessageToolCall} ChatCompletionMessageToolCall(id='call_YRmk34X7B0q5orzR1c3FwxLQ', function=Function(arguments='{}', name='end_conversation'), type='function')
+    for tool_call in assistant_message.tool_calls:
+        # Extract the function name and the arguments
+        function_name = tool_call.function.name
+        function_args = json.loads(tool_call.function.arguments)
+
+        # Get the actual function
+        function_to_call = function_list[function_name]
+
+        # Call the function with the parameter(s) and store the function response
+        function_response = function_to_call()
+        debug = 1
+
+
 if __name__ == '__main__':
     messages_list=[]
-    is_terminated = False
     caller_role = None
 
     while not is_terminated:
@@ -99,7 +125,6 @@ if __name__ == '__main__':
         tool_choice = "auto"
 
         if user_prompt == TERMINATION_MESSAGE:
-            is_terminated = True
             caller_role = SYSTEM_ROLE
             tools = functions_list
 
@@ -118,8 +143,10 @@ if __name__ == '__main__':
         gpt_response = chat_completion.choices[0].message.content
         total_usage_costs = calculate_tokens_cost(MODEL_4_MINI, chat_completion)
 
+        gpt_response_message = chat_completion.choices[0].message
+        perform_function_calls(assistant_message=gpt_response_message)
+
         if is_terminated:
-            gpt_response_message = chat_completion.choices[0].message
             # print(f"Assistant message: {gpt_response_message}")
             print(f"{gpt_response_message.tool_calls[0].id}")
 
